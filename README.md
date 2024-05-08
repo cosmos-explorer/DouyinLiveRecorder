@@ -40,6 +40,7 @@
 - [x] TwitchTV
 - [x] LiveMe
 - [x] 花椒直播
+- [x] 流星直播
 - [ ] 更多平台正在更新中
 
 </div>
@@ -85,7 +86,7 @@
 
 - 如果要长时间挂着软件循环监测直播，最好循环时间设置长一点（咱也不差没录制到的那几分钟），避免因请求频繁导致被官方封禁IP 。
 
-- 要停止直播录制，使用`Ctrl+C ` 或直接关闭程序即可。
+- 要停止直播录制，使用 `Ctrl+C ` 或直接关闭程序即可。
 - 最后，欢迎右上角给本项目一个star，同时也非常乐意大家提交pr。
 
 &emsp;
@@ -173,19 +174,16 @@ https://www.liveme.com/zh/v/17141543493018047815/index.html
 
 花椒直播:
 https://www.huajiao.com/user/223184650
+
+流星直播:
+https://www.7u66.com/100960
 ```
 
 直播间分享地址和网页端长地址都能正常进行录制（抖音尽量用长链接，避免因短链接转换失效导致不能正常录制，而且需要有nodejs环境，否则无法转换）。
 
 &emsp;
 
-解析接口：
-
-该解析接口 ~~仅供演示~~(演示接口暂时停止，后续再开放)，并且只包含抖音、快手、虎牙直播的解析，其他平台如有需要请自行添加，源码在这里 [DouyinLiveRecorder/api](https://github.com/ihmily/DouyinLiveRecorder/tree/main/api)
-
-
-
-在线播放m3u8和flv视频网站：[M3U8 在线视频播放器 ](https://jx.hmily.vip/play/)，源码是 [index.html](https://github.com/ihmily/DouyinLiveRecorder/blob/main/index.html)
+在线播放m3u8和flv视频网站：[M3U8 在线视频播放器 ](https://jx.hmily.vip/play/)
 
 &emsp;
 
@@ -301,13 +299,26 @@ docker-compose stop
 [![wwkk2580](https://github.com/wwkk2580.png?size=50)](https://github.com/wwkk2580)
 [![missuo](https://github.com/missuo.png?size=50)](https://github.com/missuo)
 <a href="https://github.com/xueli12" target="_blank"><img src="https://github.com/xueli12.png?size=50" alt="xueli12" style="width:53px; height:51px;" /></a>
+<a href="https://github.com/kaine1973" target="_blank"><img src="https://github.com/kaine1973.png?size=50" alt="kaine1973" style="width:53px; height:51px;" /></a>
 &emsp;
 
 ## ⏳提交日志
 
+- 20240508
+  - 修复花椒直播录制
+  
+  - 更改文件路径解析方式 [@kaine1973](https://github.com/kaine1973)
+  
+- 20240506
+  - 修复抖音录制画质解析bug
+
+  - 修复虎牙录制 60帧最高画质问题
+
+  - 新增流星直播录制
+
 - 20240427
   - 新增LiveMe、花椒直播录制
-  
+
 - 20240425
   - 新增TwitchTV直播录制
 

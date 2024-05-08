@@ -4,7 +4,7 @@
 Author: Hmily
 GitHub: https://github.com/ihmily
 Date: 2023-07-17 23:52:05
-Update: 2024-04-27 22:38:00
+Update: 2024-05-06 22:45:21
 Copyright (c) 2023-2024 by Hmily, All Rights Reserved.
 Function: Record live stream video.
 """
@@ -25,7 +25,7 @@ import hashlib
 import urllib.parse
 import urllib.request
 from urllib.error import URLError, HTTPError
-from typing import Any, Union
+from typing import Any, Union, Dict
 import configparser
 
 from spider import (
@@ -55,7 +55,8 @@ from spider import (
     get_kugou_stream_url,
     get_twitchtv_stream_data,
     get_liveme_stream_url,
-    get_huajiao_stream_url
+    get_huajiao_stream_url,
+    get_liuxing_stream_url
 )
 
 from web_rid import (
@@ -68,11 +69,11 @@ from utils import (
 )
 from msg_push import dingtalk, xizhi, tg_bot
 
-version = "v3.0.3"
-platforms = "\n国内站点：抖音|快手|虎牙|斗鱼|YY|B站|小红书|bigo|blued|网易CC|千度热播|猫耳FM|Look|TwitCasting|百度|微博|酷狗|LiveMe|花椒直播" \
+version = "v3.0.4"
+platforms = "\n国内站点：抖音|快手|虎牙|斗鱼|YY|B站|小红书|bigo|blued|网易CC|千度热播|猫耳FM|Look|TwitCasting|百度|微博|酷狗|LiveMe|花椒|流星" \
             "\n海外站点：TikTok|AfreecaTV|PandaTV|WinkTV|FlexTV|PopkonTV|TwitchTV"
 
-# --------------------------全局变量-------------------------------------
+
 recording = set()
 unrecording = set()
 warning_count = 0
@@ -90,17 +91,18 @@ not_record_list = []
 start_display_time = datetime.datetime.now()
 global_proxy = False
 recording_time_list = {}
-config_file = './config/config.ini'
-url_config_file = './config/URL_config.ini'
-backup_dir = './backup_config'
+script_path = os.path.split(os.path.realpath(sys.argv[0]))[0]
+config_file = f'{script_path}/config/config.ini'
+url_config_file = f'{script_path}/config/URL_config.ini'
+backup_dir = f'{script_path}/backup_config'
 encoding = 'utf-8-sig'
 rstr = r"[\/\\\:\*\?\"\<\>\|&.。,，]"
 ffmpeg_path = "ffmpeg"  # ffmpeg文件路径
-default_path = os.getcwd() + '/downloads'
+default_path = f'{script_path}/downloads'
 os.makedirs(default_path, exist_ok=True)
+file_update_lock = threading.Lock()
 
 
-# --------------------------用到的函数-------------------------------------
 def signal_handler(_signal, _frame):
     sys.exit(0)
 
@@ -162,10 +164,8 @@ def display_info():
             logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
 
 
-def update_file(file_path: str, old_str: str, new_str: str, start_str: str = None, lock: threading.Lock = None):
-    if lock is None:
-        lock = threading.Lock()
-    with lock:
+def update_file(file_path: str, old_str: str, new_str: str, start_str: str = None):
+    with file_update_lock:
         file_data = ""
         with open(file_path, "r", encoding="utf-8-sig") as f:
             for text_line in f:
@@ -241,9 +241,7 @@ def create_ass_file(filegruop: list):
 def change_max_connect():
     global max_request
     global warning_count
-    # 动态控制连接次数
     preset = max_request
-    # 记录当前时间
     start_time = time.time()
 
     while True:
@@ -252,10 +250,10 @@ def change_max_connect():
             if preset > 5:
                 max_request = 5
             else:
-                max_request //= 2  # 将max_request除以2（向下取整）
-                if max_request > 0:  # 如果得到的结果大于0，则直接取该结果
+                max_request //= 2
+                if max_request > 0:
                     max_request = preset
-                else:  # 否则将其设置为1
+                else:
                     preset = 1
 
             print("同一时间访问网络的线程数动态改为", max_request)
@@ -276,7 +274,7 @@ def change_max_connect():
 
 
 @trace_error_decorator
-def get_douyin_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_douyin_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
     # TODO: 获取抖音直播源地址
 
     anchor_name = json_data.get('anchor_name', None)
@@ -290,40 +288,41 @@ def get_douyin_stream_url(json_data: dict, video_quality: str) -> dict:
 
     if status == 2:
         stream_url = json_data['stream_url']
-        flv_url_list = stream_url['flv_pull_url']
-        m3u8_url_list = stream_url['hls_pull_url_map']
+        flv_url_dict = stream_url['flv_pull_url']
+        flv_url_list = list(flv_url_dict.values())
+        m3u8_url_dict = stream_url['hls_pull_url_map']
+        m3u8_url_list = list(m3u8_url_dict.values())
 
-        # video_qualities = {
-        #     "原画": "FULL_HD1",
-        #     "蓝光": "FULL_HD1",
-        #     "超清": "HD1",
-        #     "高清": "SD1",
-        #     "标清": "SD2",
-        # }
+        top_qn = stream_url['live_core_sdk_data']['pull_data']['options']['qualities'][-1]['name']
 
-        quality_list: list = list(m3u8_url_list.keys())
-        while len(quality_list) < 4:
-            quality_list.append(quality_list[-1])
-        video_qualities = {"原画": 0, "蓝光": 0, "超清": 1, "高清": 2, "标清": 3}
+        if top_qn == '原画':
+            flv_url_head, flv_url_tail = flv_url_list[-1].split('.flv')
+            flv_url_list = [flv_url_head.rsplit('_', maxsplit=1)[0] + '.flv' + flv_url_tail] + flv_url_list
+            m3u8_url_head, m3u8_url_tail = m3u8_url_list[-1].split('.m3u8')
+            m3u8_url_list = [m3u8_url_head.rsplit('_', maxsplit=1)[0] + '/index.m3u8' + m3u8_url_tail] + m3u8_url_list
+
+        while len(flv_url_list) < 5:
+            flv_url_list.append(flv_url_list[-1])
+            m3u8_url_list.append(m3u8_url_list[-1])
+
+        video_qualities = {"原画": 0, "蓝光": 0, "超清": 1, "高清": 2, "标清": 3, "流畅": 4}
         quality_index = video_qualities.get(video_quality)
-        quality_key = quality_list[quality_index]
-        m3u8_url = m3u8_url_list.get(quality_key)
-        flv_url = flv_url_list.get(quality_key)
-
+        m3u8_url = m3u8_url_list[quality_index]
+        flv_url = flv_url_list[quality_index]
         result['m3u8_url'] = m3u8_url
         result['flv_url'] = flv_url
         result['is_live'] = True
-        result['record_url'] = m3u8_url  # 使用 m3u8 链接进行录制
+        result['record_url'] = m3u8_url
     return result
 
 
 @trace_error_decorator
-def get_tiktok_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_tiktok_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
     # TODO: 获取tiktok直播源地址
     if not json_data:
         return {"anchor_name": None, "is_live": False}
 
-    def get_video_quality_url(stream, q_key):
+    def get_video_quality_url(stream, q_key) -> Dict[str, str]:
         return {
             'hls': re.sub("https", "http", stream[q_key]['main']['hls']),
             'flv': re.sub("https", "http", stream[q_key]['main']['flv']),
@@ -343,10 +342,10 @@ def get_tiktok_stream_url(json_data: dict, video_quality: str) -> dict:
         stream_data = live_room['liveRoom']['streamData']['pull_data']['stream_data']
         stream_data = json.loads(stream_data).get('data', {})
 
-        quality_list: list = list(stream_data.keys())  # ["origin","uhd","sd","ld"]
-        while len(quality_list) < 4:
+        quality_list: list = list(stream_data.keys())
+        while len(quality_list) < 5:
             quality_list.append(quality_list[-1])
-        video_qualities = {"原画": 0, "蓝光": 0, "超清": 1, "高清": 2, "标清": 3}
+        video_qualities = {"原画": 0, "蓝光": 0, "超清": 1, "高清": 2, "标清": 3, '流畅': 4}
         quality_index = video_qualities.get(video_quality)
         quality_key = quality_list[quality_index]
         video_quality_urls = get_video_quality_url(stream_data, quality_key)
@@ -359,7 +358,7 @@ def get_tiktok_stream_url(json_data: dict, video_quality: str) -> dict:
 
 
 @trace_error_decorator
-def get_kuaishou_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_kuaishou_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
     # TODO: 获取快手直播源地址
 
     if json_data['type'] == 1 and not json_data["is_live"]:
@@ -373,21 +372,21 @@ def get_kuaishou_stream_url(json_data: dict, video_quality: str) -> dict:
     }
 
     if live_status:
-        quality_mapping = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3}
+        quality_mapping = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3, '流畅': 4}
 
         if video_quality in quality_mapping:
 
             quality_index = quality_mapping[video_quality]
             if 'm3u8_url_list' in json_data:
                 m3u8_url_list = json_data['m3u8_url_list'][::-1]
-                while len(m3u8_url_list) < 4:
+                while len(m3u8_url_list) < 5:
                     m3u8_url_list.append(m3u8_url_list[-1])
                 m3u8_url = m3u8_url_list[quality_index]['url']
                 result['m3u8_url'] = m3u8_url
 
             if 'flv_url_list' in json_data:
                 flv_url_list = json_data['flv_url_list'][::-1]
-                while len(flv_url_list) < 4:
+                while len(flv_url_list) < 5:
                     flv_url_list.append(flv_url_list[-1])
                 flv_url = flv_url_list[quality_index]['url']
                 result['flv_url'] = flv_url
@@ -398,7 +397,7 @@ def get_kuaishou_stream_url(json_data: dict, video_quality: str) -> dict:
 
 
 @trace_error_decorator
-def get_huya_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_huya_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
     # TODO: 获取虎牙直播源地址
 
     game_live_info = json_data.get('data', [])[0].get('gameLiveInfo', {})
@@ -419,7 +418,7 @@ def get_huya_stream_url(json_data: dict, video_quality: str) -> dict:
         hls_url_suffix = select_cdn.get('sHlsUrlSuffix')
         flv_anti_code = select_cdn.get('sFlvAntiCode')
 
-        def get_anti_code(old_anti_code):
+        def get_anti_code(old_anti_code: str) -> str:
 
             # js地址：https://hd.huya.com/cdn_libs/mobile/hysdk-m-202402211431.js
 
@@ -460,18 +459,17 @@ def get_huya_stream_url(json_data: dict, video_quality: str) -> dict:
         m3u8_url = f'{hls_url}/{stream_name}.{hls_url_suffix}?{new_anti_code}&ratio='
 
         quality_list = flv_anti_code.split('&exsphd=')
-        if len(quality_list) > 1:
+        if len(quality_list) > 1 and video_quality not in ["原画", "蓝光"]:
             pattern = r"(?<=264_)\d+"
             quality_list = [x for x in re.findall(pattern, quality_list[1])][::-1]
-            while len(quality_list) < 4:
+            while len(quality_list) < 5:
                 quality_list.append(quality_list[-1])
 
             video_quality_options = {
-                "原画": quality_list[0],
-                "蓝光": quality_list[0],
-                "超清": quality_list[1],
-                "高清": quality_list[2],
-                "标清": quality_list[3]
+                "超清": quality_list[0],
+                "高清": quality_list[1],
+                "标清": quality_list[2],
+                "流畅": quality_list[3]
             }
 
             if video_quality not in video_quality_options:
@@ -489,7 +487,7 @@ def get_huya_stream_url(json_data: dict, video_quality: str) -> dict:
 
 
 @trace_error_decorator
-def get_douyu_stream_url(json_data: dict, cookies: str, video_quality: str, proxy_address: str) -> dict:
+def get_douyu_stream_url(json_data: dict, cookies: str, video_quality: str, proxy_address: str) -> Dict[str, Any]:
     # TODO: 获取斗鱼直播源地址
     if not json_data["is_live"]:
         return json_data
@@ -499,7 +497,8 @@ def get_douyu_stream_url(json_data: dict, cookies: str, video_quality: str, prox
         "蓝光": '0',
         "超清": '3',
         "高清": '2',
-        "标清": '1'
+        "标清": '1',
+        "流畅": '1'
     }
 
     rid = str(json_data["room_id"])
@@ -514,7 +513,7 @@ def get_douyu_stream_url(json_data: dict, cookies: str, video_quality: str, prox
 
 
 @trace_error_decorator
-def get_yy_stream_url(json_data: dict) -> dict:
+def get_yy_stream_url(json_data: dict) -> Dict[str, Any]:
     # TODO: 获取YY直播源地址
     anchor_name = json_data.get('anchor_name', '')
     result = {
@@ -533,7 +532,7 @@ def get_yy_stream_url(json_data: dict) -> dict:
 
 
 @trace_error_decorator
-def get_bilibili_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_bilibili_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
     # TODO: 获取B站直播源地址
     if "is_live" in json_data and not json_data['anchor_name']:
         return json_data
@@ -598,14 +597,14 @@ def get_bilibili_stream_url(json_data: dict, video_quality: str) -> dict:
 
 
 @trace_error_decorator
-def get_afreecatv_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_afreecatv_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
     # TODO: 获取afreecatv直播源地址
     if not json_data['is_live']:
         return json_data
 
     play_url_list = json_data['play_url_list']
-    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3}
-    while len(play_url_list) < 4:
+    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3, '流畅': 4}
+    while len(play_url_list) < 5:
         play_url_list.append(play_url_list[-1])
 
     selected_quality = quality_list[video_quality]
@@ -620,16 +619,16 @@ def get_afreecatv_stream_url(json_data: dict, video_quality: str) -> dict:
 
 
 @trace_error_decorator
-def get_netease_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_netease_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
     # TODO: 获取netease直播源地址
     if not json_data['is_live']:
         return json_data
     stream_list = json_data['stream_list']['resolution']
     order = ['blueray', 'ultra', 'high', 'standard']
     sorted_keys = [key for key in order if key in stream_list]
-    while len(sorted_keys) < 4:
+    while len(sorted_keys) < 5:
         sorted_keys.append(sorted_keys[-1])
-    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3}
+    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3, '流畅': 4}
     selected_quality = sorted_keys[quality_list[video_quality]]
     flv_url_list = stream_list[selected_quality]['cdn']
     selected_cdn = list(flv_url_list.keys())[0]
@@ -643,14 +642,14 @@ def get_netease_stream_url(json_data: dict, video_quality: str) -> dict:
 
 
 @trace_error_decorator
-def get_pandatv_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_pandatv_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
     # TODO: 获取pandatv直播源地址
     if not json_data['is_live']:
         return json_data
 
     play_url_list = json_data['play_url_list']
-    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3}
-    while len(play_url_list) < 4:
+    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3, '流畅': 4}
+    while len(play_url_list) < 5:
         play_url_list.append(play_url_list[-1])
 
     selected_quality = quality_list[video_quality]
@@ -665,14 +664,14 @@ def get_pandatv_stream_url(json_data: dict, video_quality: str) -> dict:
 
 
 @trace_error_decorator
-def get_winktv_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_winktv_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
     # TODO: 获取winktv直播源地址
     if not json_data['is_live']:
         return json_data
 
     play_url_list = json_data['play_url_list']
-    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3}
-    while len(play_url_list) < 4:
+    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3, '流畅': 4}
+    while len(play_url_list) < 5:
         play_url_list.append(play_url_list[-1])
 
     selected_quality = quality_list[video_quality]
@@ -687,14 +686,14 @@ def get_winktv_stream_url(json_data: dict, video_quality: str) -> dict:
 
 
 @trace_error_decorator
-def get_flextv_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_flextv_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
     # TODO: 获取flextv直播源地址
     if not json_data['is_live']:
         return json_data
 
     play_url_list = json_data['play_url_list']
-    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3}
-    while len(play_url_list) < 4:
+    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3, '流畅': 4}
+    while len(play_url_list) < 5:
         play_url_list.append(play_url_list[-1])
 
     selected_quality = quality_list[video_quality]
@@ -709,14 +708,14 @@ def get_flextv_stream_url(json_data: dict, video_quality: str) -> dict:
 
 
 @trace_error_decorator
-def get_baidu_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_baidu_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
     # TODO: 获取百度直播源地址
     if not json_data['is_live']:
         return json_data
 
     play_url_list = json_data['play_url_list']
-    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3}
-    while len(play_url_list) < 4:
+    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3, '流畅': 4}
+    while len(play_url_list) < 5:
         play_url_list.append(play_url_list[-1])
 
     selected_quality = quality_list[video_quality]
@@ -730,13 +729,14 @@ def get_baidu_stream_url(json_data: dict, video_quality: str) -> dict:
     }
 
 
-def get_twitchtv_stream_url(json_data: dict, video_quality: str) -> dict:
+def get_twitchtv_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]:
+    # TODO: 获取twitchtv直播源地址
     if not json_data['is_live']:
         return json_data
 
     play_url_list = json_data['play_url_list']
-    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3}
-    while len(play_url_list) < 4:
+    quality_list = {'原画': 0, '蓝光': 0, '超清': 1, '高清': 2, '标清': 3, '流畅': 4}
+    while len(play_url_list) < 5:
         play_url_list.append(play_url_list[-1])
 
     selected_quality = quality_list[video_quality]
@@ -750,7 +750,7 @@ def get_twitchtv_stream_url(json_data: dict, video_quality: str) -> dict:
     }
 
 
-def push_message(content: str):
+def push_message(content: str) -> Union[str, list]:
     push_pts = []
     if '微信' in live_status_push:
         push_pts.append('微信')
@@ -761,7 +761,7 @@ def push_message(content: str):
     if 'TG' in live_status_push or 'tg' in live_status_push:
         push_pts.append('TG')
         tg_bot(tg_chat_id, tg_token, content)
-    push_pts = '、'.join(push_pts) if len(push_pts) > 0 else ''
+    push_pts = '、'.join(push_pts) if len(push_pts) > 0 else []
     return push_pts
 
 
@@ -1054,6 +1054,12 @@ def start_record(url_data: tuple, count_variable: int = -1):
                         with semaphore:
                             port_info = get_huajiao_stream_url(
                                 url=record_url, proxy_addr=proxy_address, cookies=huajiao_cookie)
+
+                    elif record_url.find("7u66.com/") > -1:
+                        platform = '流星直播'
+                        with semaphore:
+                            port_info = get_liuxing_stream_url(
+                                url=record_url, proxy_addr=proxy_address, cookies=liuxing_cookie)
                     else:
                         logger.error(f'{record_url} 未知直播地址')
                         return
@@ -1185,7 +1191,12 @@ def start_record(url_data: tuple, count_variable: int = -1):
                                 rec_info = f"\r{anchor_name} 录制视频中: {full_path}"
                                 filename_short = full_path + '/' + anchor_name + '_' + now
                                 if show_url:
-                                    logger.info(f"{platform} | {anchor_name} | 直播源地址: {port_info['record_url']}")
+                                    re_plat = ['WinkTV', 'PandaTV']
+                                    if platform in re_plat:
+                                        logger.info(f"{platform} | {anchor_name} | 直播源地址: {port_info['m3u8_url']}")
+                                    else:
+                                        logger.info(
+                                            f"{platform} | {anchor_name} | 直播源地址: {port_info['record_url']}")
 
                                 if video_save_type == "FLV":
                                     filename = anchor_name + '_' + now + '.flv'
@@ -1533,7 +1544,7 @@ def start_record(url_data: tuple, count_variable: int = -1):
 
 def backup_file(file_path: str, backup_dir_path: str):
     """
-    备份配置文件到备份目录，分别保留最新 5 个文件
+    备份配置文件到备份目录，分别保留最新 8 个文件
     """
     try:
         if not os.path.exists(backup_dir_path):
@@ -1554,13 +1565,13 @@ def backup_file(file_path: str, backup_dir_path: str):
         url_files.sort(key=lambda x: os.path.getmtime(os.path.join(backup_dir_path, x)))
         config_files.sort(key=lambda x: os.path.getmtime(os.path.join(backup_dir_path, x)))
 
-        while len(url_files) > 5:
+        while len(url_files) > 8:
             oldest_file = url_files[0]
             os.remove(os.path.join(backup_dir_path, oldest_file))
             # print(f'\r已删除最旧的 URL_config.ini 备份文件 {oldest_file}')
             url_files = url_files[1:]
 
-        while len(config_files) > 5:
+        while len(config_files) > 8:
             oldest_file = config_files[0]
             os.remove(os.path.join(backup_dir_path, oldest_file))
             # print(f'\r已删除最旧的 config.ini 备份文件 {oldest_file}')
@@ -1593,7 +1604,13 @@ def backup_file_start():
 
 
 # --------------------------检测是否存在ffmpeg-------------------------------------
-ffmepg_file_check = subprocess.getoutput("ffmpeg")
+with open(os.devnull, 'wb') as dev_null:
+    try:
+        subprocess.check_call(['ffmpeg', '--help'], stdout=dev_null, stderr=dev_null)
+    except FileNotFoundError as err:
+        ffmpeg_path = f"{script_path}/ffmpeg.exe"
+# print(ffmpeg_path)
+ffmepg_file_check = subprocess.getoutput(ffmpeg_path)
 if ffmepg_file_check.find("run") > -1:
     # print("ffmpeg存在")
     pass
@@ -1611,8 +1628,8 @@ print(f"GitHub: https://github.com/ihmily/DouyinLiveRecorder")
 print(f'支持平台: {platforms}')
 print('.....................................................')
 
-if not os.path.exists('./config'):
-    os.makedirs('./config')
+if not os.path.exists(f'{script_path}/config'):
+    os.makedirs(f'{script_path}/config')
 
 # 备份配置
 t3 = threading.Thread(target=backup_file_start, args=(), daemon=True)
@@ -1634,8 +1651,8 @@ except Exception as err:
     print("An unexpected error occurred:", err)
 
 
-def read_config_value(config_parser: configparser.RawConfigParser, section: str, option: str, default_value: Any) -> (
-        Union)[str, int, bool]:
+def read_config_value(config_parser: configparser.RawConfigParser, section: str, option: str, default_value: Any) \
+        -> Union[str, int, bool]:
     try:
 
         config_parser.read(config_file, encoding=encoding)
@@ -1684,7 +1701,7 @@ while True:
     video_save_path = read_config_value(config, '录制设置', '直播保存路径（不填则默认）', "")
     folder_by_author = options.get(read_config_value(config, '录制设置', '保存文件夹是否以作者区分', "是"), False)
     video_save_type = read_config_value(config, '录制设置', '视频保存格式ts|mkv|flv|mp4|ts音频|mkv音频', "ts")
-    video_record_quality = read_config_value(config, '录制设置', '原画|超清|高清|标清', "原画")
+    video_record_quality = read_config_value(config, '录制设置', '原画|超清|高清|标清|流畅', "原画")
     use_proxy = options.get(read_config_value(config, '录制设置', '是否使用代理ip（是/否）', "是"), False)
     proxy_addr_bak = read_config_value(config, '录制设置', '代理地址', "")
     proxy_addr = None if not use_proxy else proxy_addr_bak
@@ -1754,6 +1771,7 @@ while True:
     twitch_cookie = read_config_value(config, 'Cookie', 'twitch_cookie', '')
     liveme_cookie = read_config_value(config, 'Cookie', 'liveme_cookie', '')
     huajiao_cookie = read_config_value(config, 'Cookie', 'huajiao_cookie', '')
+    liuxing_cookie = read_config_value(config, 'Cookie', 'liuxing_cookie', '')
 
     if len(video_save_type) > 0:
         if video_save_type.upper().lower() == "FLV".lower():
@@ -1814,7 +1832,7 @@ while True:
                 else:
                     quality, url, name = split_line
 
-                if quality not in ["原画", "蓝光", "超清", "高清", "标清"]:
+                if quality not in ["原画", "蓝光", "超清", "高清", "标清", "流畅"]:
                     quality = '原画'
 
                 if ('http://' not in url) and ('https://' not in url):
@@ -1845,6 +1863,8 @@ while True:
                     'mfanxing.kugou.com',
                     'www.liveme.com',
                     'www.huajiao.com',
+                    'www.7u66.com',
+                    'wap.7u66.com',
                 ]
                 overseas_platform_host = [
                     'www.tiktok.com',
@@ -1862,6 +1882,12 @@ while True:
                     if url_host in ['live.douyin.com', 'live.bilibili.com', 'www.huajiao.com']:
                         update_file(url_config_file, url, url.split('?')[0])
                         url = url.split('?')[0]
+                    if url_host in ['www.xiaohongshu.com', 'www.redelight.cn']:
+                        if 'share_source' in url:
+                            xhs_url_h, xhs_url_t, = url.split('?')
+                            new_xhs_url = xhs_url_h + '?appuid=' + xhs_url_t.split('&appuid=')[1].split('&')[0]
+                            update_file(url_config_file, url, new_xhs_url)
+                            url = new_xhs_url
 
                     new_line = (quality, url, name)
                     url_tuples_list.append(new_line)
@@ -1894,7 +1920,6 @@ while True:
                         print(f"\r新增链接: {url_tuple[1]}")
                     monitoring += 1
                     args = [url_tuple, monitoring]
-                    # TODO: 执行开始录制的操作
                     create_var['thread' + str(monitoring)] = threading.Thread(target=start_record, args=args)
                     create_var['thread' + str(monitoring)].daemon = True
                     create_var['thread' + str(monitoring)].start()
