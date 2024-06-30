@@ -2,15 +2,16 @@
 
 """
 Author: Hmily
-GitHub:https://github.com/ihmily
+GitHub: https://github.com/ihmily
 Date: 2023-07-15 23:15:00
-Update: 2024-05-08 12:40:18
+Update: 2024-06-26 12:21:00
 Copyright (c) 2023 by Hmily, All Rights Reserved.
 Function: Get live stream data.
 """
-
+import gzip
 import hashlib
 import random
+import string
 import time
 import urllib.parse
 import urllib.error
@@ -28,6 +29,7 @@ from utils import (
 )
 from logger import script_path
 import http.cookiejar
+from web_rid import get_sec_user_id
 
 no_proxy_handler = urllib.request.ProxyHandler({})
 opener = urllib.request.build_opener(no_proxy_handler)
@@ -44,7 +46,9 @@ def get_req(
         data: Union[dict, bytes, None] = None,
         json_data: Union[dict, list, None] = None,
         timeout: int = 20,
-        abroad: bool = False
+        abroad: bool = False,
+        content_conding: str = 'utf-8',
+        redirect_url: bool = False,
 ) -> Union[str, Any]:
     if headers is None:
         headers = {}
@@ -59,25 +63,37 @@ def get_req(
                                          timeout=timeout)
             else:
                 response = requests.get(url, headers=headers, proxies=proxies, timeout=timeout)
+            if redirect_url:
+                return response.url
             resp_str = response.text
         else:
             if data and not isinstance(data, bytes):
-                data = urllib.parse.urlencode(data).encode('utf-8')
+                data = urllib.parse.urlencode(data).encode(content_conding)
             if json_data and isinstance(json_data, (dict, list)):
-                data = json.dumps(json_data).encode('utf-8')
+                data = json.dumps(json_data).encode(content_conding)
 
             req = urllib.request.Request(url, data=data, headers=headers)
 
             try:
                 if abroad:
-                    with urllib.request.urlopen(req, timeout=timeout) as response:
-                        resp_str = response.read().decode('utf-8')
+                    response = urllib.request.urlopen(req, timeout=timeout)
                 else:
-                    with opener.open(req, timeout=timeout) as response:
-                        resp_str = response.read().decode('utf-8')
+                    response = opener.open(req, timeout=timeout)
+                if redirect_url:
+                    return response.url
+                content_encoding = response.info().get('Content-Encoding')
+                try:
+                    if content_encoding == 'gzip':
+                        with gzip.open(response, 'rt', encoding=content_conding) as gzipped:
+                            resp_str = gzipped.read()
+                    else:
+                        resp_str = response.read().decode(content_conding)
+                finally:
+                    response.close()
+
             except urllib.error.HTTPError as e:
                 if e.code == 400:
-                    resp_str = e.read().decode('utf-8')
+                    resp_str = e.read().decode(content_conding)
                 else:
                     raise
             except urllib.error.URLError as e:
@@ -99,8 +115,12 @@ def get_params(url: str, params: str) -> Union[str, None]:
 
     if params in query_params:
         return query_params[params][0]
-    else:
-        return None
+
+
+def generate_random_string(length):
+    characters = string.ascii_uppercase + string.digits
+    random_string = ''.join(random.choices(characters, k=length))
+    return random_string
 
 
 def jsonp_to_json(jsonp_str: str) -> Union[dict, None]:
@@ -112,8 +132,7 @@ def jsonp_to_json(jsonp_str: str) -> Union[dict, None]:
         json_obj = json.loads(json_str)
         return json_obj
     else:
-        print("No JSON data found in JSONP response.")
-        return None
+        raise Exception("No JSON data found in JSONP response.")
 
 
 def replace_url(file_path: str, old: str, new: str) -> None:
@@ -131,11 +150,70 @@ def get_play_url_list(m3u8: str, proxy: Union[str, None] = None, header: Union[d
     for i in resp.split('\n'):
         if i.startswith('https://'):
             play_url_list.append(i.strip())
+    if not play_url_list:
+        for i in resp.split('\n'):
+            if i.strip().endswith('m3u8'):
+                play_url_list.append(i.strip())
     bandwidth_pattern = re.compile(r'BANDWIDTH=(\d+)')
     bandwidth_list = bandwidth_pattern.findall(resp)
     url_to_bandwidth = {url: int(bandwidth) for bandwidth, url in zip(bandwidth_list, play_url_list)}
     play_url_list = sorted(play_url_list, key=lambda url: url_to_bandwidth[url], reverse=True)
     return play_url_list
+
+
+@trace_error_decorator
+def get_douyin_app_stream_data(url: str, proxy_addr: Union[str, None] = None, cookies: Union[str, None] = None) -> \
+        Dict[str, Any]:
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'Accept-Language': 'zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2',
+        'Referer': 'https://live.douyin.com/',
+        'Cookie': 'ttwid=1%7CB1qls3GdnZhUov9o2NxOMxxYS2ff6OSvEWbv0ytbES4%7C1680522049%7C280d802d6d478e3e78d0c807f7c487e7ffec0ae4e5fdd6a0fe74c3c6af149511; my_rd=1; passport_csrf_token=3ab34460fa656183fccfb904b16ff742; passport_csrf_token_default=3ab34460fa656183fccfb904b16ff742; d_ticket=9f562383ac0547d0b561904513229d76c9c21; n_mh=hvnJEQ4Q5eiH74-84kTFUyv4VK8xtSrpRZG1AhCeFNI; store-region=cn-fj; store-region-src=uid; LOGIN_STATUS=1; __security_server_data_status=1; FORCE_LOGIN=%7B%22videoConsumedRemainSeconds%22%3A180%7D; pwa2=%223%7C0%7C3%7C0%22; download_guide=%223%2F20230729%2F0%22; volume_info=%7B%22isUserMute%22%3Afalse%2C%22isMute%22%3Afalse%2C%22volume%22%3A0.6%7D; strategyABtestKey=%221690824679.923%22; stream_recommend_feed_params=%22%7B%5C%22cookie_enabled%5C%22%3Atrue%2C%5C%22screen_width%5C%22%3A1536%2C%5C%22screen_height%5C%22%3A864%2C%5C%22browser_online%5C%22%3Atrue%2C%5C%22cpu_core_num%5C%22%3A8%2C%5C%22device_memory%5C%22%3A8%2C%5C%22downlink%5C%22%3A10%2C%5C%22effective_type%5C%22%3A%5C%224g%5C%22%2C%5C%22round_trip_time%5C%22%3A150%7D%22; VIDEO_FILTER_MEMO_SELECT=%7B%22expireTime%22%3A1691443863751%2C%22type%22%3Anull%7D; home_can_add_dy_2_desktop=%221%22; __live_version__=%221.1.1.2169%22; device_web_cpu_core=8; device_web_memory_size=8; xgplayer_user_id=346045893336; csrf_session_id=2e00356b5cd8544d17a0e66484946f28; odin_tt=724eb4dd23bc6ffaed9a1571ac4c757ef597768a70c75fef695b95845b7ffcd8b1524278c2ac31c2587996d058e03414595f0a4e856c53bd0d5e5f56dc6d82e24004dc77773e6b83ced6f80f1bb70627; __ac_nonce=064caded4009deafd8b89; __ac_signature=_02B4Z6wo00f01HLUuwwAAIDBh6tRkVLvBQBy9L-AAHiHf7; ttcid=2e9619ebbb8449eaa3d5a42d8ce88ec835; webcast_leading_last_show_time=1691016922379; webcast_leading_total_show_times=1; webcast_local_quality=sd; live_can_add_dy_2_desktop=%221%22; msToken=1JDHnVPw_9yTvzIrwb7cQj8dCMNOoesXbA_IooV8cezcOdpe4pzusZE7NB7tZn9TBXPr0ylxmv-KMs5rqbNUBHP4P7VBFUu0ZAht_BEylqrLpzgt3y5ne_38hXDOX8o=; msToken=jV_yeN1IQKUd9PlNtpL7k5vthGKcHo0dEh_QPUQhr8G3cuYv-Jbb4NnIxGDmhVOkZOCSihNpA2kvYtHiTW25XNNX_yrsv5FN8O6zm3qmCIXcEe0LywLn7oBO2gITEeg=; tt_scid=mYfqpfbDjqXrIGJuQ7q-DlQJfUSG51qG.KUdzztuGP83OjuVLXnQHjsz-BRHRJu4e986'
+    }
+    if cookies:
+        headers['Cookie'] = cookies
+
+    def get_app_data():
+        room_id, sec_uid = get_sec_user_id(url=url, proxy_addr=proxy_addr)
+        api2 = f'https://webcast.amemv.com/webcast/room/reflow/info/?verifyFp=verify_lxj5zv70_7szNlAB7_pxNY_48Vh_ALKF_GA1Uf3yteoOY&type_id=0&live_id=1&room_id={room_id}&sec_user_id={sec_uid}&version_code=99.99.99&app_id=1128'
+        json_str2 = get_req(url=api2, proxy_addr=proxy_addr, headers=headers)
+        json_data2 = json.loads(json_str2)['data']
+        room_data2 = json_data2['room']
+        room_data2['anchor_name'] = room_data2['owner']['nickname']
+        return room_data2
+
+    try:
+        web_rid = url.split('?')[0].split('live.douyin.com/')
+        if len(web_rid) > 1:
+            web_rid = web_rid[1]
+            api = f'https://live.douyin.com/webcast/room/web/enter/?aid=6383&app_name=douyin_web&live_id=1&device_platform=web&language=zh-CN&browser_language=zh-CN&browser_platform=Win32&browser_name=Chrome&browser_version=116.0.0.0&web_rid={web_rid}'
+            json_str = get_req(url=api, proxy_addr=proxy_addr, headers=headers)
+            json_data = json.loads(json_str)['data']
+            room_data = json_data['data'][0]
+            room_data['anchor_name'] = json_data['user']['nickname']
+        else:
+            room_data = get_app_data()
+
+        if 'stream_url' not in room_data:
+            raise RuntimeError('该直播类型或玩法电脑端暂未支持，请使用app端分享链接进行录制')
+        live_core_sdk_data = room_data['stream_url']['live_core_sdk_data']
+
+        if room_data['status'] == 2:
+            if live_core_sdk_data:
+                json_str = live_core_sdk_data['pull_data']['stream_data']
+                json_data = json.loads(json_str)
+                if 'origin' in json_data['data']:
+                    origin_url_list = json_data['data']['origin']['main']
+                    origin_m3u8 = {'ORIGIN': origin_url_list["hls"]}
+                    origin_flv = {'ORIGIN': origin_url_list["flv"]}
+                    hls_pull_url_map = room_data['stream_url']['hls_pull_url_map']
+                    flv_pull_url = room_data['stream_url']['flv_pull_url']
+                    room_data['stream_url']['hls_pull_url_map'] = {**origin_m3u8, **hls_pull_url_map}
+                    room_data['stream_url']['flv_pull_url'] = {**origin_flv, **flv_pull_url}
+    except Exception as e:
+        print(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+        room_data = {'anchor_name': ""}
+    return room_data
 
 
 @trace_error_decorator
@@ -151,6 +229,7 @@ def get_douyin_stream_data(url: str, proxy_addr: Union[str, None] = None, cookie
         headers['Cookie'] = cookies
 
     try:
+        origin_url_list = None
         html_str = get_req(url=url, proxy_addr=proxy_addr, headers=headers)
         match_json_str = re.search(r'(\{\\"state\\":.*?)]\\n"]\)', html_str)
         if not match_json_str:
@@ -162,18 +241,33 @@ def get_douyin_stream_data(url: str, proxy_addr: Union[str, None] = None, cookie
         room_store = room_store.split(',"has_commerce_goods"')[0] + '}}}'
         json_data = json.loads(room_store)['roomInfo']['room']
         json_data['anchor_name'] = anchor_name
+        if 'status' in json_data and json_data['status'] == 4:
+            return json_data
+
+        match_json_str2 = re.search(r'"(\{\\"common\\":.*?)"]\)</script><script nonce=', html_str)
+        if match_json_str2:
+            json_str = match_json_str2.group(1).replace('\\', '').replace('"{', '{').replace('}"', '}').replace('u0026', '&')
+            json_data2 = json.loads(json_str)
+            if 'origin' in json_data2['data']:
+                origin_url_list = json_data2['data']['origin']['main']
+
+        else:
+            match_json_str3 = re.search('"origin":\{"main":(.*?),"dash"',html_str.replace('\\', '').replace('u0026', '&'), re.S)
+            if match_json_str3:
+                origin_url_list = json.loads(match_json_str3.group(1) + '}')
+
+        if origin_url_list:
+            origin_m3u8 = {'ORIGIN': origin_url_list["hls"]}
+            origin_flv = {'ORIGIN': origin_url_list["flv"]}
+            hls_pull_url_map = json_data['stream_url']['hls_pull_url_map']
+            flv_pull_url = json_data['stream_url']['flv_pull_url']
+            json_data['stream_url']['hls_pull_url_map'] = {**origin_m3u8, **hls_pull_url_map}
+            json_data['stream_url']['flv_pull_url'] = {**origin_flv, **flv_pull_url}
         return json_data
 
     except Exception as e:
-        print(f'失败地址：{url} 准备切换解析方法{e}')
-        web_rid = re.match('https://live.douyin.com/(\d+)', url).group(1)
-        headers['Cookie'] = 'sessionid=b03763e09810c59948fbd9c6ab5a667a'
-        url2 = f'https://live.douyin.com/webcast/room/web/enter/?aid=6383&app_name=douyin_web&live_id=1&web_rid={web_rid}'
-        json_str = get_req(url=url2, proxy_addr=proxy_addr, headers=headers)
-        json_data = json.loads(json_str)['data']
-        room_data = json_data['data'][0]
-        room_data['anchor_name'] = json_data['user']['nickname']
-        return room_data
+        print(f'第一次获取数据失败：{url} 准备切换解析方法{e}')
+        return get_douyin_app_stream_data(url=url, proxy_addr=proxy_addr, cookies=cookies)
 
 
 @trace_error_decorator
@@ -188,11 +282,15 @@ def get_tiktok_stream_data(url: str, proxy_addr: Union[str, None] = None, cookie
     for i in range(3):
         html_str = get_req(url=url, proxy_addr=proxy_addr, headers=headers, abroad=True)
         time.sleep(1)
+        if 'We regret to inform you that we have discontinued operating TikTok' in html_str:
+            msg = re.search('<p>\n\s+(We regret to inform you that we have discontinu.*?)\.\n\s+</p>', html_str)
+            raise ConnectionError(
+                f'你的代理节点地区网络被禁止访问TikTok，请切换其他地区的节点访问 {msg.group(1) if msg else ""}')
         if 'UNEXPECTED_EOF_WHILE_READING' not in html_str:
             try:
                 json_str = re.findall(
-                    '<script id="SIGI_STATE" type="application/json">(.*?)</script><script id="SIGI_RETRY" type="application/json">',
-                    html_str)[0]
+                    '<script id="SIGI_STATE" type="application/json">(.*?)</script>',
+                    html_str, re.S)[0]
             except Exception:
                 raise ConnectionError("请检查你的网络是否可以正常访问TikTok网站")
             json_data = json.loads(json_str)
@@ -387,7 +485,8 @@ def get_douyu_stream_data(rid: str, rate: str = '-1', proxy_addr: Union[str, Non
         'rate': rate,  # 0蓝光、3超清、2高清、-1默认
     }
 
-    app_api = 'https://m.douyu.com/hgapi/livenc/room/getStreamUrl'
+    # app_api = 'https://m.douyu.com/hgapi/livenc/room/getStreamUrl'
+    app_api = f'https://www.douyu.com/lapi/live/getH5Play/{rid}'
     json_str = get_req(url=app_api, proxy_addr=proxy_addr, headers=headers, data=data)
     json_data = json.loads(json_str)
     return json_data
@@ -422,10 +521,9 @@ def get_yy_stream_data(url: str, proxy_addr: Union[str, None] = None, cookies: U
 def get_bilibili_stream_data(url: str, proxy_addr: Union[str, None] = None, cookies: Union[str, None] = None) -> \
         Dict[str, Any]:
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Referer': 'https://live.bilibili.com/?spm_id_from=333.1296.0.0',
-        'Cookie': "bilibili.com"
+        'Accept-Language': 'zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2',
     }
     if cookies:
         headers['Cookie'] = cookies
@@ -466,7 +564,11 @@ def get_xhs_stream_url(url: str, proxy_addr: Union[str, None] = None, cookies: U
     if cookies:
         headers['Cookie'] = cookies
 
-    appuid = re.search('appuid=(.*?)(?=&|$)', url).group(1)
+    if 'xhslink.com' in url:
+        url = get_req(url, proxy_addr=proxy_addr, headers=headers, redirect_url=True)
+        appuid = re.search('host_id=(.*?)(?=&|$)', url).group(1)
+    else:
+        appuid = re.search('appuid=(.*?)(?=&|$)', url).group(1)
     room_id = re.search('/livestream/(.*?)(?=/|\?)', url).group(1)
     app_api = f'https://www.xiaohongshu.com/api/sns/red/live/app/v1/ecology/outside/share_info?room_id={room_id}'
     # app_api = f'https://www.redelight.cn/api/sns/red/live/app/v1/ecology/outside/share_info?room_id={room_id}'
@@ -479,7 +581,7 @@ def get_xhs_stream_url(url: str, proxy_addr: Union[str, None] = None, cookies: U
         "is_live": False,
     }
 
-    # 这个判断不准确，无论是否在直播status都为0
+    # 这个判断不准确，无论是否在直播status都为0,暂无法判断
     if live_status == 0:
         flv_url = f'http://live-play.xhscdn.com/live/{room_id}.flv?uid={appuid}'
         result['flv_url'] = flv_url
@@ -1411,7 +1513,8 @@ def get_popkontv_stream_url(
 
 @trace_error_decorator
 def login_twitcasting(
-        username: str, password: str, proxy_addr: Union[str, None] = None, cookies: Union[str, None] = None
+        account_type: str, username: str, password: str, proxy_addr: Union[str, None] = None,
+        cookies: Union[str, None] = None
 ) -> Union[str, None]:
     headers = {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -1425,7 +1528,13 @@ def login_twitcasting(
     if cookies:
         headers['Cookie'] = cookies
 
-    login_url = 'https://twitcasting.tv/indexcaslogin.php?redir=%2F&keep=1'
+    if account_type == "normal":
+        login_url = 'https://twitcasting.tv/indexcaslogin.php?redir=%2F&keep=1'
+        login_api = 'https://twitcasting.tv/indexcaslogin.php?redir=/indexloginwindow.php?next=%2F&keep=1'
+    else:
+        login_url = 'https://twitcasting.tv/indexpasswordlogin.php'
+        login_api = 'https://twitcasting.tv/indexpasswordlogin.php?redir=/indexloginwindow.php?next=%2F&keep=1'
+
     html_str = get_req(login_url, proxy_addr=proxy_addr, headers=headers)
     cs_session_id = re.search('<input type="hidden" name="cs_session_id" value="(.*?)">', html_str).group(1)
 
@@ -1435,9 +1544,6 @@ def login_twitcasting(
         'action': 'login',
         'cs_session_id': cs_session_id,
     }
-
-    login_api = 'https://twitcasting.tv/indexcaslogin.php?redir=/indexloginwindow.php?next=%2F&keep=1'
-
     try:
         if proxy_addr:
             proxies = {
@@ -1467,6 +1573,7 @@ def get_twitcasting_stream_url(
         url: str,
         proxy_addr: Union[str, None] = None,
         cookies: Union[str, None] = None,
+        account_type: Union[str, None] = None,
         username: Union[str, None] = None,
         password: Union[str, None] = None,
 ) -> Dict[str, Any]:
@@ -1495,7 +1602,8 @@ def get_twitcasting_stream_url(
         anchor_name, live_status = get_data(headers)
     except AttributeError:
         print('获取TwitCasting数据失败，正在尝试登录...')
-        new_cookie = login_twitcasting(username=username, password=password, proxy_addr=proxy_addr, cookies=cookies)
+        new_cookie = login_twitcasting(account_type=account_type, username=username, password=password,
+                                       proxy_addr=proxy_addr, cookies=cookies)
         if not new_cookie:
             raise RuntimeError('TwitCasting登录失败,请检查配置文件中的账号密码是否正确')
         print('TwitCasting 登录成功！开始获取数据...')
@@ -1574,36 +1682,52 @@ def get_baidu_stream_data(url: str, proxy_addr: Union[str, None] = None, cookies
 
 
 @trace_error_decorator
-def get_weibo_stream_url(url: str, proxy_addr: Union[str, None] = None, cookies: Union[str, None] = None) -> \
+def get_weibo_stream_data(url: str, proxy_addr: Union[str, None] = None, cookies: Union[str, None] = None) -> \
         Dict[str, Any]:
     headers = {
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
-        'Connection': 'keep-alive',
-        'Referer': 'https://live.baidu.com/',
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 8.0.0; SM-G955U Build/R16NW) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 Edg/121.0.0.0',
+        'Cookie': 'XSRF-TOKEN=qAP-pIY5V4tO6blNOhA4IIOD; SUB=_2AkMRNMCwf8NxqwFRmfwWymPrbI9-zgzEieKnaDFrJRMxHRl-yT9kqmkhtRB6OrTuX5z9N_7qk9C3xxEmNR-8WLcyo2PM; SUBP=0033WrSXqPxfM72-Ws9jqgMF55529P9D9WWemwcqkukCduUO11o9sBqA; WBPSESS=Wk6CxkYDejV3DDBcnx2LOXN9V1LjdSTNQPMbBDWe4lO2HbPmXG_coMffJ30T-Avn_ccQWtEYFcq9fab1p5RR6PEI6w661JcW7-56BszujMlaiAhLX-9vT4Zjboy1yf2l',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
     }
     if cookies:
         headers['Cookie'] = cookies
 
-    room_id = url.split('?')[0].split('show/')[1]
+    room_id = ''
+    if 'show/' in url:
+        room_id = url.split('?')[0].split('show/')[1]
+    else:
+        uid = url.split('?')[0].rsplit('/u/', maxsplit=1)[1]
+        web_api = f'https://weibo.com/ajax/statuses/mymblog?uid={uid}&page=1&feature=0'
+        json_str = get_req(web_api, proxy_addr=proxy_addr, headers=headers)
+        json_data = json.loads(json_str)
+        for i in json_data['data']['list']:
+            if 'page_info' in i and i['page_info']['object_type'] == 'live':
+                room_id = i['page_info']['object_id']
+                break
 
-    app_api = f'https://weibo.com/l/pc/anchor/live?live_id={room_id}'
-    # app_api = f'https://weibo.com/l/!/2/wblive/room/show_pc_live.json?live_id={room_id}'
-    json_str = get_req(url=app_api, proxy_addr=proxy_addr, headers=headers)
-    json_data = json.loads(json_str)
-
-    anchor_name = json_data['data']['user_info']['name']
     result = {
-        "anchor_name": anchor_name,
+        "anchor_name": '',
         "is_live": False,
     }
-    live_status = json_data['data']['item']['status']
-    if live_status == 1:
-        result["is_live"] = True
-        play_url_list = json_data['data']['item']['stream_info']['pull']
-        result['m3u8_url'] = play_url_list['live_origin_hls_url']
-        result['flv_url'] = play_url_list['live_origin_flv_url']
-        result['record_url'] = play_url_list['live_origin_hls_url']
+    if room_id:
+        app_api = f'https://weibo.com/l/pc/anchor/live?live_id={room_id}'
+        # app_api = f'https://weibo.com/l/!/2/wblive/room/show_pc_live.json?live_id={room_id}'
+        json_str = get_req(url=app_api, proxy_addr=proxy_addr, headers=headers)
+        json_data = json.loads(json_str)
+
+        anchor_name = json_data['data']['user_info']['name']
+        result["anchor_name"] = anchor_name
+        live_status = json_data['data']['item']['status']
+
+        if live_status == 1:
+            result["is_live"] = True
+            play_url_list = json_data['data']['item']['stream_info']['pull']
+            m3u8_url = play_url_list['live_origin_hls_url']
+            flv_url = play_url_list['live_origin_flv_url']
+            result['play_url_list'] = [
+                {"m3u8_url": m3u8_url, "flv_url": flv_url},
+                {"m3u8_url": m3u8_url.split('_')[0] + '.m3u8', "flv_url": flv_url.split('_')[0] + '.flv'}
+            ]
 
     return result
 
@@ -1629,12 +1753,13 @@ def get_kugou_stream_url(url: str, proxy_addr: Union[str, None] = None, cookies:
 
     json_str = get_req(url=app_api, proxy_addr=proxy_addr, headers=headers)
     json_data = json.loads(json_str)
-
     anchor_name = json_data['data']['normalRoomInfo']['nickName']
     result = {
         "anchor_name": anchor_name,
         "is_live": False,
     }
+    if not anchor_name:
+        raise RuntimeError('不支持音乐频道直播间录制，请切换直播间录制')
     live_status = json_data['data']['liveType']
     if live_status == 0:
         params = {
@@ -1656,7 +1781,7 @@ def get_kugou_stream_url(url: str, proxy_addr: Union[str, None] = None, cookies:
         stream_data = json_data2['data']['lines']
         if stream_data:
             result["is_live"] = True
-            result['flv_url'] = stream_data[1]['streamProfiles'][0]['httpsFlv'][0]
+            result['flv_url'] = stream_data[-1]['streamProfiles'][0]['httpsFlv'][0]
             result['record_url'] = result['flv_url']
 
     return result
@@ -1840,7 +1965,7 @@ def get_huajiao_user_info(url: str, cookies: Union[str, None] = None, proxy_addr
 
         html_str = get_req(url=f'https://www.huajiao.com/user/{uid}', proxy_addr=proxy_addr, headers=headers)
         anchor_name = re.search('<title>(.*?)的主页.*</title>', html_str).group(1)
-        if 'rtop' in json_data['data']['feeds'][0]['feed']:
+        if json_data['data'] and 'rtop' in json_data['data']['feeds'][0]['feed']:
             live_id = json_data['data']['feeds'][0]['feed']['relateid']
             sn = json_data['data']['feeds'][0]['feed']['sn']
             return anchor_name, [sn, uid, live_id]
@@ -1920,6 +2045,117 @@ def get_liuxing_stream_url(url: str, proxy_addr: Union[str, None] = None, cookie
     return result
 
 
+@trace_error_decorator
+def get_showroom_stream_data(url: str, proxy_addr: Union[str, None] = None, cookies: Union[str, None] = None) -> \
+        Dict[str, Any]:
+    headers = {
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0',
+    }
+    if cookies:
+        headers['Cookie'] = cookies
+
+    if '/room/profile' in url:
+        room_id = url.split('room_id=')[-1]
+    else:
+        html_str = get_req(url, proxy_addr=proxy_addr, headers=headers, abroad=True)
+        room_id = re.search('href="/room/profile\?room_id=(.*?)"', html_str).group(1)
+    info_api = f'https://www.showroom-live.com/api/live/live_info?room_id={room_id}'
+    json_str = get_req(info_api, proxy_addr=proxy_addr, headers=headers, abroad=True)
+    json_data = json.loads(json_str)
+    anchor_name = json_data['room_name']
+    result = {"anchor_name": anchor_name, "is_live": False}
+    live_status = json_data['live_status']
+    if live_status == 2:
+        result["is_live"] = True
+        web_api = f'https://www.showroom-live.com/api/live/streaming_url?room_id={room_id}&abr_available=1'
+        json_str = get_req(web_api, proxy_addr=proxy_addr, headers=headers, abroad=True)
+        if json_str:
+            json_data = json.loads(json_str)
+            streaming_url_list = json_data['streaming_url_list']
+
+            for i in streaming_url_list:
+                if i['type'] == 'hls_all':
+                    m3u8_url = i['url']
+                    result['m3u8_url'] = m3u8_url
+                    if m3u8_url:
+                        m3u8_url_list = get_play_url_list(m3u8_url, proxy=proxy_addr, header=headers, abroad=True)
+                        if m3u8_url_list:
+                            result['play_url_list'] = [f"{m3u8_url.rsplit('/', maxsplit=1)[0]}/{i}" for i in m3u8_url_list]
+                        else:
+                            result['play_url_list'] = [m3u8_url]
+                        result['play_url_list'] = [i.replace('https://', 'http://') for i in result['play_url_list']]
+                        break
+    return result
+
+
+@trace_error_decorator
+def get_acfun_sign_params(proxy_addr: Union[str, None] = None, cookies: Union[str, None] = None) -> \
+        Tuple[Any, str, Any]:
+    did = f'web_{generate_random_string(16)}'
+    headers = {
+        'referer': 'https://live.acfun.cn/',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0',
+        'cookie': f'_did={did};',
+    }
+    if cookies:
+        headers['Cookie'] = cookies
+    data = {
+        'sid': 'acfun.api.visitor',
+    }
+    api = 'https://id.app.acfun.cn/rest/app/visitor/login'
+    json_str = get_req(api, data=data, proxy_addr=proxy_addr, headers=headers)
+    json_data = json.loads(json_str)
+    user_id = json_data["userId"]
+    visitor_st = json_data["acfun.api.visitor_st"]
+    return user_id, did, visitor_st
+
+
+@trace_error_decorator
+def get_acfun_stream_data(url: str, proxy_addr: Union[str, None] = None, cookies: Union[str, None] = None) -> \
+        Dict[str, Any]:
+    headers = {
+        'referer': 'https://live.acfun.cn/live/17912421',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0',
+    }
+    if cookies:
+        headers['Cookie'] = cookies
+
+    author_id = url.split('?')[0].rsplit('/', maxsplit=1)[1]
+    user_info_api = f'https://live.acfun.cn/rest/pc-direct/user/userInfo?userId={author_id}'
+    json_str = get_req(user_info_api, proxy_addr=proxy_addr, headers=headers)
+    json_data = json.loads(json_str)
+    anchor_name = json_data['profile']['name']
+    status = 'liveId' in json_data['profile']
+    result = {"anchor_name": anchor_name, "is_live": False}
+    if status:
+        result["is_live"] = True
+        user_id, did, visitor_st = get_acfun_sign_params(proxy_addr=proxy_addr, cookies=cookies)
+        params = {
+            'subBiz': 'mainApp',
+            'kpn': 'ACFUN_APP',
+            'kpf': 'PC_WEB',
+            'userId': user_id,
+            'did': did,
+            'acfun.api.visitor_st': visitor_st,
+        }
+
+        data = {
+            'authorId': author_id,
+            'pullStreamType': 'FLV',
+        }
+        play_api = f'https://api.kuaishouzt.com/rest/zt/live/web/startPlay?{urllib.parse.urlencode(params)}'
+        json_str = get_req(play_api, data=data, proxy_addr=proxy_addr, headers=headers)
+        json_data = json.loads(json_str)
+        videoPlayRes = json_data['data']['videoPlayRes']
+        play_url_list = json.loads(videoPlayRes)['liveAdaptiveManifest'][0]['adaptationSet']['representation']
+        play_url_list = sorted(play_url_list, key=lambda x: x['bitrate'], reverse=True)
+        result['play_url_list'] = play_url_list
+
+    return result
+
+
 if __name__ == '__main__':
     # 尽量用自己的cookie，以避免默认的不可用导致无法获取数据
     # 以下示例链接不保证时效性，请自行查看链接是否能正常访问
@@ -1934,6 +2170,7 @@ if __name__ == '__main__':
     # room_url = 'https://live.bilibili.com/21593109'  # b站直播
     # room_url = 'https://live.bilibili.com/23448867'  # b站直播
     # 小红书直播
+    # room_url = 'http://xhslink.com/O9f9fM'
     # room_url = 'https://www.redelight.cn/hina/livestream/569077534207413574?appuid=5f3f478a00000000010005b3&'
     # room_url = 'https://www.xiaohongshu.com/hina/livestream/569098486282043893?appuid=5f3f478a00000000010005b3&'
     # room_url = 'https://www.bigo.tv/cn/716418802'  # bigo直播
@@ -1952,14 +2189,18 @@ if __name__ == '__main__':
     # room_url = 'https://www.popkontv.com/channel/notices?mcid=wjfal007&mcPartnerCode=P-00117'  # popkontv
     # room_url = 'https://twitcasting.tv/c:uonq'  # TwitCasting
     # room_url = 'https://live.baidu.com/m/media/pclive/pchome/live.html?room_id=9175031377&tab_category'  # 百度直播
-    # room_url = 'https://weibo.com/l/wblive/p/show/1022:2321325026370190442592'  # 微博直播
+    # room_url = 'https://weibo.com/u/7849520225'  # 微博直播
     # room_url = 'https://fanxing2.kugou.com/50428671?refer=2177&sourceFrom='  # 酷狗直播
     # room_url = 'https://www.twitch.tv/gamerbee'  # TwitchTV
     # room_url = 'https://www.liveme.com/zh/v/17141937295821012854/index.html'  # LiveMe
     # room_url = 'https://www.huajiao.com/user/223184650'  # 花椒直播
     # room_url = 'https://www.7u66.com/100960'  # 流星直播
+    # room_url = 'https://www.showroom-live.com/room/profile?room_id=511033'  # showroom
+    # room_url = 'https://www.showroom-live.com/r/TPS0728'  # showroom
+    # room_url = 'https://live.acfun.cn/live/17912421'  # Acfun
 
     print(get_douyin_stream_data(room_url, proxy_addr=''))
+    # print(get_douyin_app_stream_data(room_url, proxy_addr=''))
     # print(get_tiktok_stream_data(room_url, proxy_addr=''))
     # print(get_kuaishou_stream_data2(room_url, proxy_addr=''))
     # print(get_huya_stream_data(room_url, proxy_addr=''))
@@ -1981,9 +2222,11 @@ if __name__ == '__main__':
     # print(get_popkontv_stream_url(room_url, proxy_addr='', username='', password=''))
     # print(get_twitcasting_stream_url(room_url, proxy_addr='', username='', password=''))
     # print(get_baidu_stream_data(room_url, proxy_addr=''))
-    # print(get_weibo_stream_url(room_url, proxy_addr=''))
+    # print(get_weibo_stream_data(room_url, proxy_addr=''))
     # print(get_kugou_stream_url(room_url, proxy_addr=''))
     # print(get_twitchtv_stream_data(room_url, proxy_addr=''))
     # print(get_liveme_stream_url(room_url, proxy_addr=''))
     # print(get_huajiao_stream_url(room_url, proxy_addr=''))
     # print(get_liuxing_stream_url(room_url, proxy_addr=''))
+    # print(get_showroom_stream_data(room_url, proxy_addr=''))
+    # print(get_acfun_stream_data(room_url, proxy_addr=''))
