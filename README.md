@@ -46,6 +46,8 @@
 - [x] 时光直播
 - [x] 映客直播
 - [x] 音播直播
+- [x] 知乎直播
+- [x] CHZZK
 - [ ] 更多平台正在更新中
 
 </div>
@@ -59,19 +61,22 @@
     ├── /logs -> (save runing log file)
     ├── /backup_config -> (backup file)
     ├── /libs -> (dll file)
+    ├── /douyinliverecorder -> (package)
+    	├── spider.py-> (get live data)
+    	├── stream.py-> (get live stream address)
+    	├── utils.py -> (contains utility functions)
+    	├── logger.py -> (logger handdle)
+    	├── web_rid.py -> (get web_rid)
+    	├── msg_push.py -> (send live status update message)
+    	├── x-bogus.js -> (get douyin xbogus token)
     ├── main.py -> (main file)
-    ├── spider.py-> (get live url)
-    ├── utils.py -> (contains utility functions)
-    ├── logger.py -> (logger handdle)
-    ├── web_rid.py -> (get web_rid)
-    ├── msg_push.py -> (send live status update message)
-    ├── cookies.py -> (get douyin cookies)
-    ├── x-bogus.js -> (get douyin xbogus token)
+    ├── demo.py -> (call package test demo)
     ├── ffmpeg.exe -> (record video)
     ├── index.html -> (play m3u8 and flv video)
     ├── requirements.txt -> (library dependencies)
     ├── docker-compose.yaml -> (Container Orchestration File)
     ├── Dockerfile -> (Application Build Recipe)
+    ...
 ```
 
 </div>
@@ -85,13 +90,13 @@
 
 - 另外，如果需要录制TikTok、AfreecaTV等海外平台，请在配置文件中设置开启代理并添加proxy_addr链接 如：`127.0.0.1:7890` （这只是示例地址，具体根据实际填写）。
 
-- 假如`URL_config.ini`文件中添加的直播间地址，有个别直播间暂时不想录制又不想移除链接，可以在对应直播间的链接开头加上`#`，那么下次启动软件录制时将跳过该直播间。
+- 假如`URL_config.ini`文件中添加的直播间地址，有个别直播间暂时不想录制又不想移除链接，可以在对应直播间的链接开头加上`#`，那么将停止该直播间的监测以及录制。
 
 - 软件默认录制清晰度为 `原画` ，如果要单独设置某个直播间的录制画质，可以在添加直播间地址时前面加上画质即可，如`超清，https://live.douyin.com/745964462470` 记得中间要有`,` 分隔。
 
 - 如果要长时间挂着软件循环监测直播，最好循环时间设置长一点（咱也不差没录制到的那几分钟），避免因请求频繁导致被官方封禁IP 。
 
-- 要停止直播录制，在录制界面使用 `Ctrl+C ` 组合键中断录制。
+- 要停止直播录制，在录制界面使用 `Ctrl+C ` 组合键中断录制，若要停止其中某个直播间的录制，可在`URL_config.ini`文件中的地址前加#，会自动停止对应直播间的录制并正常保存视频。
 - 最后，欢迎右上角给本项目一个star，同时也非常乐意大家提交pr。
 
 &emsp;
@@ -199,7 +204,13 @@ https://www.rengzu.com/180778
 https://www.inke.cn/liveroom/index.html?uid=22954469&id=1720860391070904
 
 音播直播：
-https://www.ybw1666.com/800002949
+https://live.ybw1666.com/800002949
+
+知乎直播:
+https://www.zhihu.com/theater/114453
+
+CHZZK：
+https://chzzk.naver.com/live/458f6ec20b034f49e0fc6d03921646d2
 ```
 
 &emsp;
@@ -308,7 +319,7 @@ docker-compose stop
 
 ②在容器内时，如果手动中断容器运行停止录制，会导致正在录制的视频文件损坏！
 
-**如果想避免手动中断或者异常中断导致文件损坏的情况，请使用 `ts` 格式录制并且不要开启自动转成mp4设置**。
+**无论哪种运行方式，为避免手动中断或者异常中断导致录制的视频文件损坏的情况，推荐使用 `ts` 格式保存**。
 
 &emsp;
 
@@ -321,12 +332,24 @@ docker-compose stop
 [![missuo](https://github.com/missuo.png?size=50)](https://github.com/missuo)
 <a href="https://github.com/xueli12" target="_blank"><img src="https://github.com/xueli12.png?size=50" alt="xueli12" style="width:53px; height:51px;" /></a>
 <a href="https://github.com/kaine1973" target="_blank"><img src="https://github.com/kaine1973.png?size=50" alt="kaine1973" style="width:53px; height:51px;" /></a>
+<a href="https://github.com/yinruiqing" target="_blank"><img src="https://github.com/yinruiqing.png?size=50" alt="yinruiqing" style="width:53px; height:51px;" /></a>
 <a href="https://github.com/Max-Tortoise" target="_blank"><img src="https://github.com/Max-Tortoise.png?size=50" alt="Max-Tortoise" style="width:53px; height:51px;" /></a>
 [![justdoiting](https://github.com/justdoiting.png?size=50)](https://github.com/justdoiting)
+[![dhbxs](https://github.com/dhbxs.png?size=50)](https://github.com/dhbxs)
+[![wujiyu115](https://github.com/wujiyu115.png?size=50)](https://github.com/wujiyu115)
 &emsp;
 
 ## ⏳提交日志
 
+- 20241005
+  - 新增邮箱和Bark推送
+  - 新增直播注释停止录制
+  - 优化分段录制
+  - 重构部分代码
+  
+- 20240928
+  - 新增知乎直播、CHZZK直播录制
+  - 修复音播直播录制
 - 20240903
   - 新增抖音双屏录制、音播直播录制
   - 修复PandaTV、bigo直播录制
