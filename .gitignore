@@ -52,7 +52,6 @@ coverage.xml
 cover/
 
 # Translations
-*.mo
 *.pot
 
 # Django stuff:
@@ -81,6 +80,12 @@ target/
 # IPython
 profile_default/
 ipython_config.py
+
+# DouyinLiveRecord
+backup_config/
+logs/
+node/
+node-v*.zip
 
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is
